@@ -1,11 +1,17 @@
 import time
 import serial
+from serial import SerialException
 import RPi.GPIO as GPIO
 
-SIM808_RESET_Pin = 11
+SIM808_RESET_Pin = 15
 SIM808_STATUS_Pin = 12
 
-ser = None
+ser = serial.Serial('/dev/ttyS0', baudrate=115200, 
+								timeout=0.5,
+								parity=serial.PARITY_NONE,
+								stopbits=serial.STOPBITS_ONE,
+								bytesize=serial.EIGHTBITS
+								)
 
 class Fona:
 
@@ -16,41 +22,54 @@ class Fona:
 		# Reboot sequence
 		GPIO.setmode(GPIO.BOARD)
 		GPIO.setup(SIM808_RESET_Pin, GPIO.OUT, initial=0)
+		GPIO.setup(SIM808_STATUS_Pin, GPIO.IN)
 		GPIO.output(SIM808_RESET_Pin, GPIO.HIGH)
-		time.sleep(10)
+		time.sleep(10/1000) # 10 ms
 		GPIO.output(SIM808_RESET_Pin, GPIO.LOW)
-		time.sleep(100)
+		time.sleep(100/1000) # 100 ms
 		GPIO.output(SIM808_RESET_Pin, GPIO.HIGH)
-
+		duration = 7
 		# 7 seconds to boot
 		while (GPIO.input(SIM808_STATUS_Pin) == GPIO.LOW):	
 			time.sleep(0.1)
-
+			duration -= 0.1
+			if duration <= 0:
+				print('Reset timeout\n')
+				return -1
+		print('Reboot success\n')
 		return 0
 		
 	def FonaInit(self):
 		# Serial Init
-		ser = serial.Serial('/dev/ttyserial0', baudrate=115200, 
+		try:
+			ser = serial.Serial('/dev/ttyS0', baudrate=115200, 
 								timeout=0.5,
 								parity=serial.PARITY_NONE,
 								stopbits=serial.STOPBITS_ONE,
 								bytesize=serial.EIGHTBITS
 								)
-						
+		except ValueError:
+			print(ValueError)
+			return -2
+		except SerialException:
+			print(SerialException)
+			return -3
+
 		time.sleep(1)
 		
 		# Reset device
-		self.FonaReset()
+		return self.FonaReset()
+			
 
 	###################
 	# Serial handling #
 	###################
 	def FonaWrite(self, command):
-		ser.write(command + '\r')
+		ser.write(bytearray(command + '\r', "ASCII"))
 
 	def FonaReadResponse(self): # Response format <CR><LF><Response><CR><LF>
 		response = ser.read(100) # Read up to 100 bytes with 0.5 sec timeout
-		return response.replace("\r", "").replace("\n", "") # Remove <CR><LF>
+		return response.replace(b'\r', b'').replace(b'\n', b'') # Remove <CR><LF>
 		
 	################
 	# GPS handling #
@@ -78,7 +97,9 @@ class Fona:
 	def GetLocation(self):
 		self.FonaWrite('AT+CGPSINF=0')
 		location = [0, 0]
-		response = self.FonaReadResponse().split(",")
+		#response = self.FonaReadResponse().split(b",")
+		response = [0, 0, 0]
+
 		location[0] = response[1]
 		location[1] = response[2]
 		return location
