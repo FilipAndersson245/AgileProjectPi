@@ -29,11 +29,12 @@ HTTP_List = ['AT+CMGF=1\r', 'AT+CGATT=1\r', 'AT+SAPBR=3,1,"CONTYPE","GPRS"\r', '
 #        //SEND DATA OF 21 CHARS IN THIS SECTION {"position": [54,44]}
 #OK
 
-position = ""
+position = "22,33"
 
 def SendCoord():
-    position = gantry.GetLocation()
+    #position = gantry.GetLocation()
     gantry.HttpSendPost('{"position": [' + position + ']}')
+
 
 def SleepMinutes(minutes):
     time.sleep(minutes*60)
@@ -41,18 +42,32 @@ def SleepMinutes(minutes):
 gantry = Gantry()
 
 gantry.FonaInit()
-gantry.EnableGPRS()
-gantry.GprsInit()
-gantry.HttpInit(url="http://agileserver-env.yttgtpappn.eu-central-1.elasticbeanstalk.com/gantries/abc123",
-                content="application/json",
-                userdata="authorization: Bearer fhsakdjhjkfds")
+print("FonaInit complete")
+gantry.FonaWriteVerify('ATE0')
+print("Echo off complete")
+gantry.FonaWriteVerify("AT+CPIN=1786")
 
+for i in range (10):
+    gantry.FonaReadResponseLine()
+
+gantry.EnableGPRS()
+print("Enable GPRS complete")
+gantry.GprsInit("4G.tele2.se")
+print("GprsInit complete")
+gantry.HttpInit(url="http://agileserver-env.yttgtpappn.eu-central-1.elasticbeanstalk.com/gantries/AAAABBBBCCCC",
+                content="application/json",
+                userdata="authorization: weH6fcv+Se1anMqdtwzn2/MxtSmy4aMK1/E0u5gXdrF7uWgshJoORVNSSV236ONbX+kQ6YiqhNOL3HT5DFYLOA")
+print("HttpInit complete")
+SendCoord()
+print("SendCoord complete")
+gantry.FonaReadResponseLine()
 while True:
     # Send coordinates to API
-    SendCoord()
+
+    gantry.HttpGetPostResponse()
 
     # Sleep for 20 min
-    SleepMinutes(20)
+    time.sleep(10)
 
 
 

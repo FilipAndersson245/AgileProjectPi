@@ -13,12 +13,12 @@ serialGSM = serial.Serial('/dev/ttyS0', baudrate=115200,
 								bytesize=serial.EIGHTBITS
 								)
 
-serialGPS = serial.Serial('/dev/ttyUSB0', baudrate=115200, 
+"""serialGPS = serial.Serial('/dev/ttyUSB0', baudrate=9600, 
 								timeout=0.5,
 								parity=serial.PARITY_NONE,
 								stopbits=serial.STOPBITS_ONE,
 								bytesize=serial.EIGHTBITS
-								)
+								)"""
 
 class Gantry:
 
@@ -26,27 +26,6 @@ class Gantry:
 	# FONA Device handling #
 	########################
 	def FonaReset(self):
-		# Reboot sequence
-		GPIO.setmode(GPIO.BOARD)
-		GPIO.setup(SIM808_RESET_Pin, GPIO.OUT, initial=0)
-		GPIO.setup(SIM808_STATUS_Pin, GPIO.IN)
-
-		GPIO.output(SIM808_RESET_Pin, GPIO.HIGH)
-		time.sleep(10/1000) # 10 ms
-		GPIO.output(SIM808_RESET_Pin, GPIO.LOW)
-		time.sleep(100/1000) # 100 ms
-		GPIO.output(SIM808_RESET_Pin, GPIO.HIGH)
-
-		duration = 7
-		# 7 seconds to boot
-		while (GPIO.input(SIM808_STATUS_Pin) == GPIO.LOW):	
-			time.sleep(0.1)
-			duration -= 0.1
-			if duration == 0:
-				print ("Reset timeout")
-				return -1
-		
-		print ("Reboot success")
 
 		return 0
 		
@@ -54,7 +33,7 @@ class Gantry:
 		# Serial Init
 		try :
 			serialGSM = serial.Serial('/dev/ttyS0', baudrate=115200, 
-								timeout=0.5,
+								timeout=5,
 								parity=serial.PARITY_NONE,
 								stopbits=serial.STOPBITS_ONE,
 								bytesize=serial.EIGHTBITS
@@ -70,17 +49,20 @@ class Gantry:
 		time.sleep(1)
 		
 		# Reset device
-		return self.FonaReset()
+		#eturn self.FonaReset()
 
 	###################
 	# Serial handling #
 	###################
 	def FonaWrite(self, command):
 		serialGSM.write(command.encode() + b'\r')
+		print(command)
+		time.sleep(1)
 
 	def FonaWriteVerify(self, command):
 		self.FonaWrite(command)
-		ret = self.FonaReadResponse()
+		ret = self.FonaReadResponseLine()
+		#print("WriteVerify: " + command + ", Response: " + ret)
 		if ret == "ERROR":
 			print("Error in response: " + ret)
 			return -1
@@ -88,17 +70,42 @@ class Gantry:
 			return 0
 
 	def FonaWriteRetry(self, command):
+		retries = 0
 		while True:
-			if self.FonaWriteVerify == 0:
-				break
+			if retries >= 3:
+				return -1
+			ret = self.FonaWriteVerify(command)
+			if ret == 0:
+				return 0
+			else:
+				print("Command: " + command + " failed, retrying...")
+				retries += 1
+			time.sleep(0.5)
 
-	def FonaReadResponse(self, bytes=100): # Response format <CR><LF><Response><CR><LF>
+	def FonaReadResponse(self, bytes=500): # Response format <CR><LF><Response><CR><LF>
 		response = serialGSM.read(bytes) # Read up to 100 bytes or until LF with 0.5 sec timeout
-		return response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
+		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
+		print(response)
+		return response
 
-	def FonaReadResponseLine(self):
-		response = serialGSM.read_until(100) # Read up to 100 bytes or until LF with 0.5 sec timeout
-		return response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
+	def FonaReadResponses(self, bytes=500): # Response format <CR><LF><Response><CR><LF>
+		response = serialGSM.read(bytes) # Read up to 100 bytes or until LF with 0.5 sec timeout
+		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
+		print(response)
+		response = serialGSM.read(bytes) # Read up to 100 bytes or until LF with 0.5 sec timeout
+		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
+		print(response)
+		return response
+
+	def FonaReadResponseLine(self, terminator='\n', size=500):
+		# Eat <CR><LF>
+		#serialGSM.read_until(terminator=terminator, size=size)
+		response = serialGSM.read_until(terminator=terminator, size=size) # Read up to 100 bytes or until LF with 0.5 sec timeout
+		print(response)
+		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
+		response = response.decode()
+		#print(response)
+		return response
 		
 	################
 	# GPS handling #
@@ -135,10 +142,12 @@ class Gantry:
 	def GetLocation(self):
 		self.FonaWrite('AT+CGPSINF=0')
 		location = [0, 0]
-		response = self.FonaReadResponseLine().split(",")
-		location[0] = response[1]
+		#response = serialGPS.readlines(10)
+		#print(response)
+		#response = self.FonaReadResponseLine().split(",")
+	""" location[0] = response[1]
 		location[1] = response[2]
-		return location
+		return location """
 
 	def GetPowerControl(self):
 		self.FonaWrite('AT+CGPSPWR?')
@@ -226,18 +235,18 @@ class Gantry:
 		response = ""
 
 		line = self.FonaReadResponse()
-		while line != None:
-			response = response + '\n' + line
-			line = self.FonaReadResponse()
+		#while line != None:
+			#response = response + bytes('\n') + line
+		line = self.FonaReadResponse()
 
 	
 
 	def GprsInit(self, apn="online.telia.se"):
-		if self.EnableGPRS() != 0:
-			return -1
-		self.FonaWriteVerify('AT+SAPBR=3,1,"CONTYPE","GPRS"')
-		self.FonaWriteVerify('AT+SAPBR=3,1,"APN","' + apn + '"')
-		self.FonaWriteVerify('AT+SAPBR=1,1')
+		""" if self.EnableGPRS() != 0:
+			return -1 """
+		self.FonaWriteRetry('AT+SAPBR=3,1,"CONTYPE","GPRS"')
+		self.FonaWriteRetry('AT+SAPBR=3,1,"APN","' + apn + '"')
+		self.FonaWriteRetry('AT+SAPBR=1,1')
 
 		return 0
 
@@ -249,37 +258,52 @@ class Gantry:
 	#################
 
 	def HttpInit(self, url, content, userdata):
-		self.FonaWriteVerify('AT+HTTPINIT')
+		self.FonaWriteRetry('AT+HTTPINIT')
 		self.FonaWriteVerify('AT+HTTPPARA="CID",1')
-		self.FonaWriteRetry('AT+HTTPPARA="URL","' + url + '"')
-		self.FonaWriteRetry('AT+HTTPPARA="CONTENT","' + content + '"')
-		self.FonaWriteRetry('AT+HTTPPARA="USERDATA","' + userdata + '"')
+		self.FonaWriteVerify('AT+HTTPPARA="URL","' + url + '"')
+		self.FonaWriteVerify('AT+HTTPPARA="CONTENT","' + content + '"')
+		self.FonaWriteVerify('AT+HTTPPARA="USERDATA","' + userdata + '"')
 		return 0
 
 	def HttpSendPost(self, post):
 		size = len(post)
-		self.FonaWrite('AT+HTTPDATA=' + size + ',10000')
+		print(size)
+		self.FonaWrite('AT+HTTPDATA=' + str(size) + ',10000')
 		ret = self.FonaReadResponseLine()
 		if ret == "DOWNLOAD":
 			self.FonaWrite(post)
+			ret = self.FonaReadResponseLine()
 		else:
+			print("Post fail")
 			return -1
+		print("Data done")
 
 	def HttpGetPostResponse(self):
-		self.FonaWriteVerify('AT+HTTPACTION=1')
-		ret = self.FonaReadResponse()
+		ret = ""
+
+		self.FonaWrite('AT+HTTPACTION=1')
+	
+		# Read OK
+		ret = self.FonaReadResponse(6)
+		# Read response
+		ret = self.FonaReadResponseLine()
 		if "HTTPACTION" and "200" in ret:
 			self.FonaWrite("AT+HTTPREAD")
 			ret = self.FonaReadResponseLine()
-			print(ret)
 			post = self.FonaReadResponseLine()
-			print(post)
 			ret = self.FonaReadResponseLine()
-			print(ret)
 			return post
+	
 		print("HTTP Get POST Failed")
+		ret = self.FonaReadResponseLine()
+		print(ret)
 		return -1
 		
 	def HttpTerminate(self):
 		self.FonaWrite('AT+HTTPTERM')
+	
+	def HttpReadResponse(self):
+		self.FonaWriteVerify('AT+HTTPREAD')
+
+
 		
