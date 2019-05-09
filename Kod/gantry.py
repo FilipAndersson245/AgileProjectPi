@@ -6,21 +6,11 @@ import RPi.GPIO as GPIO
 SIM808_RESET_Pin = 15
 SIM808_STATUS_Pin = 12
 
-serialGSM = serial.Serial('/dev/ttyS0', baudrate=115200, 
-								timeout=0.5,
-								parity=serial.PARITY_NONE,
-								stopbits=serial.STOPBITS_ONE,
-								bytesize=serial.EIGHTBITS
-								)
 
-"""serialGPS = serial.Serial('/dev/ttyUSB0', baudrate=9600, 
-								timeout=0.5,
-								parity=serial.PARITY_NONE,
-								stopbits=serial.STOPBITS_ONE,
-								bytesize=serial.EIGHTBITS
-								)"""
 
 class Gantry:
+
+	serialGSM = serial.Serial()
 
 	########################
 	# FONA Device handling #
@@ -28,12 +18,26 @@ class Gantry:
 	def FonaReset(self):
 
 		return 0
-		
-	def FonaInit(self):
-		# Serial Init
+
+	def GsmSerialInit(self, serialdevice='/dev/ttyS0', baud=115200, timeout=5):
 		try :
-			serialGSM = serial.Serial('/dev/ttyS0', baudrate=115200, 
-								timeout=5,
+			self.serialGSM = serial.Serial(serialdevice, baudrate=baud, 
+								timeout=timeout,
+								parity=serial.PARITY_NONE,
+								stopbits=serial.STOPBITS_ONE,
+								bytesize=serial.EIGHTBITS
+								)
+		except ValueError:
+			print (ValueError)
+			return -2
+		except SerialException:
+			print (SerialException)
+			return -3
+		
+	def GpsSerialInit(self, serialdevice='/dev/ttyUSB0', baud=9600, timeout=0.5):
+		try :
+			self.serialGPS = serial.Serial(serialdevice, baudrate=baud, 
+								timeout=timeout,
 								parity=serial.PARITY_NONE,
 								stopbits=serial.STOPBITS_ONE,
 								bytesize=serial.EIGHTBITS
@@ -55,7 +59,7 @@ class Gantry:
 	# Serial handling #
 	###################
 	def FonaWrite(self, command):
-		serialGSM.write(command.encode() + b'\r')
+		self.serialGSM.write(command.encode() + b'\r')
 		print(command)
 		time.sleep(1)
 
@@ -82,26 +86,19 @@ class Gantry:
 				retries += 1
 			time.sleep(0.5)
 
-	def FonaReadResponse(self, bytes=500): # Response format <CR><LF><Response><CR><LF>
-		response = serialGSM.read(bytes) # Read up to 100 bytes or until LF with 0.5 sec timeout
-		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
+	def FonaReadResponse(self, size=500): # Response format <CR><LF><Response><CR><LF>
+		response = self.serialGSM.read(size) # Read up to 100 bytes or until LF with 0.5 sec timeout
 		print(response)
+		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
+		response = response.decode()
 		return response
 
-	def FonaReadResponses(self, bytes=500): # Response format <CR><LF><Response><CR><LF>
-		response = serialGSM.read(bytes) # Read up to 100 bytes or until LF with 0.5 sec timeout
-		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
-		print(response)
-		response = serialGSM.read(bytes) # Read up to 100 bytes or until LF with 0.5 sec timeout
-		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
-		print(response)
-		return response
-
-	def FonaReadResponseLine(self, terminator='\n', size=500):
+	def FonaReadResponseLine(self, terminator=b'\n', size=500):
 		# Eat <CR><LF>
-		#serialGSM.read_until(terminator=terminator, size=size)
-		response = serialGSM.read_until(terminator=terminator, size=size) # Read up to 100 bytes or until LF with 0.5 sec timeout
-		print(response)
+		response = self.serialGSM.read_until(terminator=terminator, size=size)
+		print("Eaten: " + str(response))
+		response = response + self.serialGSM.read_until(terminator=terminator, size=size) # Read up to 100 bytes or until LF with 0.5 sec timeout
+		print("Response: " + str(response))
 		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
 		response = response.decode()
 		#print(response)
@@ -156,6 +153,22 @@ class Gantry:
 	
 	def EnableGPSNMEA(self, nmea):
 		return self.FonaReadResponse()
+
+	def SkyTraqGetLocation(self):
+		location = ""
+		while True:
+			line = self.serialGPS.read_until(terminator='\n')
+			if "$GPGLL" in line:
+				line = line.split(',')
+				latitude = line[1]
+				longitude = line[3]
+				if line[2] == "S":
+					latitude = -latitude
+				if line[4] == "W":
+					longitude = -longitude
+				location = latitude + "," + longitude
+				break
+		return location
 		
 	################
 	# GSM handling #
@@ -267,36 +280,36 @@ class Gantry:
 
 	def HttpSendPost(self, post):
 		size = len(post)
-		print(size)
-		self.FonaWrite('AT+HTTPDATA=' + str(size) + ',10000')
-		ret = self.FonaReadResponseLine()
-		if ret == "DOWNLOAD":
+		self.FonaWrite('AT+HTTPDATA=' + str(size) + ',100000')
+		ret = self.FonaReadResponse()
+		if "DOWNLOAD" in ret:
 			self.FonaWrite(post)
-			ret = self.FonaReadResponseLine()
+			ret = self.FonaReadResponse()
 		else:
 			print("Post fail")
 			return -1
 		print("Data done")
 
 	def HttpGetPostResponse(self):
-		ret = ""
-
 		self.FonaWrite('AT+HTTPACTION=1')
 	
+	 	# ret = self.FonaReadResponse()
 		# Read OK
-		ret = self.FonaReadResponse(6)
+		ret = self.FonaReadResponseLine()
 		# Read response
 		ret = self.FonaReadResponseLine()
 		if "HTTPACTION" and "200" in ret:
 			self.FonaWrite("AT+HTTPREAD")
-			ret = self.FonaReadResponseLine()
+			ret = self.FonaReadResponse()
+			"""ret = self.FonaReadResponseLine()
+			print("line1: " + ret)
 			post = self.FonaReadResponseLine()
-			ret = self.FonaReadResponseLine()
-			return post
+			print("line2: " + post)"""
+			return ret
 	
 		print("HTTP Get POST Failed")
-		ret = self.FonaReadResponseLine()
-		print(ret)
+		"""ret = self.FonaReadResponseLine()
+		print(ret)"""
 		return -1
 		
 	def HttpTerminate(self):
