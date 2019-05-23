@@ -1,4 +1,4 @@
-import time
+import time, datetime
 import serial
 from serial import SerialException
 import RPi.GPIO as GPIO
@@ -11,6 +11,20 @@ SIM808_STATUS_Pin = 12
 class Gantry:
 
 	serialGSM = serial.Serial()
+
+	filename = datetime.datetime.now()
+	f = open('../Log/' + str(filename)+'.log', 'w')
+	f.close()
+
+	###############
+	# Debug print #
+	###############
+	def Debug(self, msg):
+		self.f = open('../Log/' + str(self.filename)+'.log', 'a')
+		print(msg)
+		print(msg, file=self.f)
+		self.f.close()
+
 
 	########################
 	# FONA Device handling #
@@ -28,11 +42,15 @@ class Gantry:
 								bytesize=serial.EIGHTBITS
 								)
 		except ValueError:
-			print (ValueError)
+			self.Debug (ValueError)
 			return -2
 		except SerialException:
-			print (SerialException)
+			self.Debug (SerialException)
 			return -3
+
+		time.sleep(1)
+
+		return 0
 		
 	def GpsSerialInit(self, serialdevice='/dev/ttyUSB0', baud=9600, timeout=0.5):
 		try :
@@ -43,32 +61,39 @@ class Gantry:
 								bytesize=serial.EIGHTBITS
 								)
 		except ValueError:
-			print (ValueError)
+			self.Debug (ValueError)
 			return -2
 		except SerialException:
-			print (SerialException)
+			self.Debug (SerialException)
 			return -3
-
 						
 		time.sleep(1)
 		
-		# Reset device
-		#eturn self.FonaReset()
+		return 0
+
+	def CheckDevice(self):
+		if self.FonaWriteVerify("AT") == -1:
+			while True:
+				self.Debug("GSM Device not found")
+				time.sleep(10)
+				if self.EnableGPRS() == 0:
+					self.Debug("GSM Device Successfully connected")
+					break
 
 	###################
 	# Serial handling #
 	###################
 	def FonaWrite(self, command):
 		self.serialGSM.write(command.encode() + b'\r')
-		print(command)
+		self.Debug(command)
 		time.sleep(1)
 
 	def FonaWriteVerify(self, command):
 		self.FonaWrite(command)
 		ret = self.FonaReadResponseLine()
-		#print("WriteVerify: " + command + ", Response: " + ret)
+		#self.Debug("WriteVerify: " + command + ", Response: " + ret)
 		if ret == "ERROR":
-			print("Error in response: " + ret)
+			self.Debug("Error in response: " + ret)
 			return -1
 		elif ret == "OK":
 			return 0
@@ -82,26 +107,26 @@ class Gantry:
 			if ret == 0:
 				return 0
 			else:
-				print("Command: " + command + " failed, retrying...")
+				self.Debug("Command: " + command + " failed, retrying...")
 				retries += 1
 			time.sleep(0.5)
 
 	def FonaReadResponse(self, size=500): # Response format <CR><LF><Response><CR><LF>
 		response = self.serialGSM.read(size) # Read up to 100 bytes or until LF with 0.5 sec timeout
-		print(response)
 		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
 		response = response.decode()
+		self.Debug(response)
 		return response
 
 	def FonaReadResponseLine(self, terminator=b'\n', size=500):
 		# Eat <CR><LF>
 		response = self.serialGSM.read_until(terminator=terminator, size=size)
-		print("Eaten: " + str(response))
+		#self.Debug("Eaten: " + str(response))
 		response = response + self.serialGSM.read_until(terminator=terminator, size=size) # Read up to 100 bytes or until LF with 0.5 sec timeout
-		print("Response: " + str(response))
+		#self.Debug("Response: " + str(response))
 		response = response.replace(b"\r", b"").replace(b"\n", b"") # Remove <CR><LF>
 		response = response.decode()
-		#print(response)
+		self.Debug(response)
 		return response
 		
 	################
@@ -140,7 +165,7 @@ class Gantry:
 		self.FonaWrite('AT+CGPSINF=0')
 		location = [0, 0]
 		#response = serialGPS.readlines(10)
-		#print(response)
+		#self.Debug(response)
 		#response = self.FonaReadResponseLine().split(",")
 	""" location[0] = response[1]
 		location[1] = response[2]
@@ -154,12 +179,16 @@ class Gantry:
 	def EnableGPSNMEA(self, nmea):
 		return self.FonaReadResponse()
 
-	def SkyTraqGetLocation(self):
+	def NmeaGetLocation(self):
 		location = ""
 		while True:
-			line = self.serialGPS.read_until(terminator='\n')
-			if "$GPGLL" in line:
+			line = self.serialGPS.read_until(terminator=b'\n')
+			line = line.decode()
+			#self.Debug(line)
+			if "$GNGLL" in line:
 				line = line.split(',')
+				if line[6] == "V":
+					return "No fix"
 				latitude = line[1]
 				longitude = line[3]
 				if line[2] == "S":
@@ -192,7 +221,7 @@ class Gantry:
 			if self.FonaReadResponse() == "OK":
 				return 0
 		else:
-			print("Error: Pin required")
+			self.Debug("Error: Pin required")
 			return -1
 
 	def StartTask(self, apn, user, pwd):
@@ -286,9 +315,9 @@ class Gantry:
 			self.FonaWrite(post)
 			ret = self.FonaReadResponse()
 		else:
-			print("Post fail")
+			self.Debug("Post fail")
 			return -1
-		print("Data done")
+		self.Debug("Data done")
 
 	def HttpGetPostResponse(self):
 		self.FonaWrite('AT+HTTPACTION=1')
@@ -298,19 +327,30 @@ class Gantry:
 		ret = self.FonaReadResponseLine()
 		# Read response
 		ret = self.FonaReadResponseLine()
-		if "HTTPACTION" and "200" in ret:
+		if "HTTPACTION" in ret:
 			self.FonaWrite("AT+HTTPREAD")
 			ret = self.FonaReadResponse()
 			"""ret = self.FonaReadResponseLine()
-			print("line1: " + ret)
+			self.Debug("line1: " + ret)
 			post = self.FonaReadResponseLine()
-			print("line2: " + post)"""
+			self.Debug("line2: " + post)"""
 			return ret
 	
-		print("HTTP Get POST Failed")
+		self.Debug("HTTP Get POST Failed")
 		"""ret = self.FonaReadResponseLine()
-		print(ret)"""
+		self.Debug(ret)"""
 		return -1
+
+	def HttpVerifySend(self):
+		self.FonaWrite('AT+HTTPACTION=1')
+		# Read OK
+		ret = self.FonaReadResponseLine()
+		# Read response
+		ret = self.FonaReadResponseLine()
+		if "HTTPACTION" and "200" in ret:
+			return 0
+		else:
+			return -1
 		
 	def HttpTerminate(self):
 		self.FonaWrite('AT+HTTPTERM')
