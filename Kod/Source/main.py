@@ -30,8 +30,17 @@ def SendCoord():
         return
     GPIO.output(FIX_LED_Pin, GPIO.HIGH)
     position = position.split(",")
-    strlat = "{:.6f}".format(float(position[0])/100)
-    strlon = "{:.6f}".format(float(position[1])/100)
+    
+    lat_dd = int(float(position[0])/100)
+    lat_mm = float(position[0]) - (lat_dd * 100)
+    lat_dec = lat_dd + lat_mm/60
+
+    lon_dd = int(float(position[1])/100)
+    lon_mm = float(position[1]) - (lon_dd * 100)
+    lon_dec = lon_dd + lon_mm/60
+
+    strlat = "{:.6f}".format(lat_dec)
+    strlon = "{:.6f}".format(lon_dec)
     position = strlat + "," + strlon
 
     # Send to API
